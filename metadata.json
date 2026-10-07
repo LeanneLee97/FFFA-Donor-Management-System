@@ -1,0 +1,6 @@
+{
+  "name": "DonorPulse CRM",
+  "description": "Comprehensive donor relationship management, impact dashboards, and AI-powered personalized outreach and newsletter studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
