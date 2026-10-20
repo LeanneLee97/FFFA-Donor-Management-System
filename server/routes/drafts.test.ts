@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.ts';
 import { createDb, migrate, type Db } from '../db.ts';
 import { devStaffResolver } from '../middleware/auth.ts';
@@ -7,11 +7,16 @@ import type { AiClient } from '../services/ai/client.ts';
 
 let db: Db;
 
+// One in-memory Postgres per file, reset before each test. Starting a fresh PGlite per test
+// leaks WebAssembly memory and stalls after about a dozen instances.
+beforeAll(async () => {
+  db = await createDb();
+});
 beforeEach(async () => {
-  db = await createDb(); // in-memory PGlite
+  await db.exec('drop schema public cascade; create schema public;');
   await migrate(db);
 });
-afterEach(() => db.close());
+afterAll(() => db.close());
 
 const fakeAi = (impl: AiClient['generateDraft']): AiClient => ({ model: 'fake-model', generateDraft: impl });
 
@@ -19,14 +24,16 @@ function app(ai: AiClient | null) {
   return createApp({ db, ai, resolveStaff: devStaffResolver(db) });
 }
 
-async function seedFollowUp(opts: { giving?: number; reason?: string } = {}) {
+async function seedFollowUp(opts: { giving?: number; reason?: string; firstGiftDaysAgo?: number; major?: boolean } = {}) {
   const [donor] = await db.query<{ id: string }>(
-    `insert into donors (first_name, email, mobile) values ('Mei Ling', 'ml@example.com', '91234567') returning id`,
+    `insert into donors (first_name, email, mobile, major_override)
+     values ('Mei Ling', 'ml@example.com', '91234567', $1) returning id`,
+    [opts.major ?? false],
   );
   await db.query(
     `insert into donations (donor_id, donated_on, amount_sgd, is_recurring, monthly_amount_sgd, programme)
-     values ($1, current_date - 5, $2, true, $2, 'RTE')`,
-    [donor.id, opts.giving ?? 30],
+     values ($1, current_date - $3::int, $2, true, $2, 'RTE')`,
+    [donor.id, opts.giving ?? 30, opts.firstGiftDaysAgo ?? 5],
   );
   const [followUp] = await db.query<{ id: string }>(
     `insert into follow_ups (donor_id, reason, dedupe_key) values ($1, $2, $3) returning id`,
@@ -60,7 +67,7 @@ describe('DM10 AI drafting API', () => {
       `select action, diff from activity_log order by id`,
     );
     expect(log.map((l) => l.action)).toEqual(['ai.generate', 'ai.approve']);
-    expect(log[0].diff).toMatchObject({ source: 'ai', model: 'fake-model', prompt_version: 'dm10-v1' });
+    expect(log[0].diff).toMatchObject({ source: 'ai', model: 'fake-model', prompt_version: 'dm10-v2' });
     expect(log[1].diff).toEqual({ edited: true });
   });
 
@@ -83,9 +90,13 @@ describe('DM10 AI drafting API', () => {
     expect(res.body.source).toBe('template_fallback');
   });
 
-  it('refuses AI drafts for personal-outreach donors', async () => {
+  it.each([
+    ['S$5,000+ in 12 months', { giving: 6000 }],
+    ['3+ years with FFFA', { firstGiftDaysAgo: 3 * 366 }],
+    ['tagged major by staff', { major: true }],
+  ])('refuses AI drafts for major donors (%s)', async (_label, opts) => {
     const ai = fakeAi(async () => ({ subject: 's', body: 'b' }));
-    const { followUpId } = await seedFollowUp({ giving: 25000 }); // diamond tier
+    const { followUpId } = await seedFollowUp(opts);
     const res = await request(app(ai)).post(`/api/follow-ups/${followUpId}/draft`).expect(422);
     expect(res.body.code).toBe('PERSONAL_OUTREACH');
   });
@@ -113,5 +124,73 @@ describe('DM10 AI drafting API', () => {
   it('returns 404 for unknown or malformed ids', async () => {
     await request(app(null)).post('/api/follow-ups/00000000-0000-0000-0000-000000000000/draft').expect(404);
     await request(app(null)).post('/api/follow-ups/not-a-uuid/draft').expect(404);
+  });
+
+  it('marks an approved draft as sent: message saved on the profile, follow-up done, logged', async () => {
+    const { donorId, followUpId } = await seedFollowUp();
+    const { body: draft } = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+    await request(app(null)).post(`/api/drafts/${draft.id}/approve`).send({ subject: 'Thanks!', body: 'Final text' }).expect(200);
+
+    const res = await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).send({ channel: 'email' }).expect(200);
+    expect(res.body.draft).toMatchObject({ status: 'sent' });
+    expect(res.body.draft.sent_at).toBeTruthy();
+    expect(res.body.engagement).toMatchObject({
+      donor_id: donorId,
+      follow_up_id: followUpId,
+      ai_draft_id: draft.id,
+      channel: 'email',
+      message_subject: 'Thanks!',
+      message_body: 'Final text',
+    });
+
+    const [fu] = await db.query<{ status: string }>(`select status from follow_ups where id = $1`, [followUpId]);
+    expect(fu.status).toBe('done');
+    const [summary] = await db.query<{ days_since_engagement: number }>(
+      `select days_since_engagement from donor_summary where donor_id = $1`,
+      [donorId],
+    );
+    expect(summary.days_since_engagement).toBe(0); // cadence clock reset
+    const actions = (await db.query<{ action: string }>(`select action from activity_log order by id`)).map((r) => r.action);
+    expect(actions).toEqual(['ai.generate', 'ai.approve', 'ai.sent']);
+  });
+
+  it('only approved drafts can be marked as sent, once', async () => {
+    const { followUpId } = await seedFollowUp();
+    const { body: draft } = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+    const early = await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).expect(409);
+    expect(early.body.code).toBe('NOT_APPROVED');
+
+    await request(app(null)).post(`/api/drafts/${draft.id}/approve`).send({ body: 'ok' }).expect(200);
+    await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).send({ channel: 'fax' }).expect(400);
+    await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).expect(200);
+    await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).expect(409);
+    const engagements = await db.query(`select id from engagements`);
+    expect(engagements).toHaveLength(1);
+  });
+
+  it('rolls back mark-as-sent completely if any step fails', async () => {
+    const { followUpId } = await seedFollowUp();
+    const { body: draft } = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+    await request(app(null)).post(`/api/drafts/${draft.id}/approve`).send({ body: 'ok' }).expect(200);
+    // Break the last step (activity log) so the transaction must undo the earlier writes.
+    await db.exec(`alter table activity_log add constraint no_sent check (action <> 'ai.sent')`);
+
+    await request(app(null)).post(`/api/drafts/${draft.id}/mark-sent`).expect(500);
+    const [d] = await db.query<{ status: string }>(`select status from ai_drafts where id = $1`, [draft.id]);
+    const [fu] = await db.query<{ status: string }>(`select status from follow_ups where id = $1`, [followUpId]);
+    expect(d.status).toBe('approved');
+    expect(fu.status).toBe('pending');
+    expect(await db.query(`select id from engagements`)).toHaveLength(0);
+  });
+
+  it('drafts failed-payment follow-ups from the latest failed payment', async () => {
+    const { donorId, followUpId } = await seedFollowUp({ reason: 'failed_payment' });
+    await db.query(
+      `insert into donations (donor_id, donated_on, amount_sgd, channel, is_recurring, monthly_amount_sgd, payment_status)
+       values ($1, current_date - 1, 30, 'give_asia', true, 30, 'failed')`,
+      [donorId],
+    );
+    const res = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+    expect(res.body.body_generated).toContain('monthly gift on GIVE.asia');
   });
 });

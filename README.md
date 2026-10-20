@@ -47,17 +47,19 @@ docs/                 # system design
 
 | Slice | PRD | Owner | Status |
 |---|---|---|---|
-| Platform: schema, DB layer, auth hook, activity log hook, shared types | DM7 | Ghanashyam | Done |
-| AI drafting: draft → edit → approve → log, template fallback | DM10 | Ghanashyam | API done |
-| Donors, donations, notes, engagements API | DM1–DM3, DM8 | Swaraj | To do |
-| Follow-up rules engine + queue API | DM4, DM9 | Swaraj | To do |
+| Platform: schema (001 + 002 FFFA feedback), DB layer with transactions, auth hook, activity log hook, shared types | DM7 | Ghanashyam | Done |
+| AI drafting: draft → edit → approve → mark as sent (message saved on profile), major-donor block, template fallback | DM10 | Ghanashyam | API done |
+| Donors, donations (cash + in-kind), notes, engagements, key dates API | DM1–DM3, DM8 | Swaraj | To do |
+| Follow-up rules engine (incl. key dates, failed payments) + queue API | DM4, DM9 | Swaraj | To do |
 | Supabase Auth + all screens except dashboard | DM7, UI | Chris | To do |
-| Seed data, CSV import, dashboard | DM5, DM6 | Lynn | To do |
+| Seed data, CSV import (Giving.sg + GIVE.asia matching), dashboard, activity log endpoint | DM5, DM6, DM7 | Lynn | To do |
 
 ## Conventions
 
 - Add a new migration file for schema changes (`002_…sql`); never edit one that has been merged.
 - Wrap async routes in `asyncRoute` and log every write with `logActivity`.
+- Use `db.transaction(async (tx) => …)` when one action writes several tables (see `markDraftSent`).
+- In tests, share one in-memory database per file and reset the schema in `beforeEach` (see `drafts.test.ts`); a new PGlite per test stalls after about a dozen.
 - Use dummy or de-identified data only. Never commit real donor data or `.env`.
 - Every pull request gets one review from a teammate.
 
