@@ -407,6 +407,8 @@ People & Processes (Fiona's team) provides: FFFA field confirmation, rule thresh
 - In-kind donations count towards thank-yous and reports, not towards tiers or major status.
 - Hosting and post-handover ownership: decided with FFFA before 28 Oct; the build stays container-portable.
 
-**Open questions** (in FFFA's question sheet; not yet answered)
-1. **Do you hold any other donor data, such as demographics (age, income, ethnicity, dialect) or preferences?** *Design note:* PRD §3 keeps these out of Phase 1.
-2. **Does your team use a dashboard for key operational figures (active donors, active beneficiaries, inventory)?** *Design note:* the Phase 1 dashboard covers donor figures only.
+**Question sheet (answered by FFFA's email, 20 Oct)**
+1. *Other donor data such as demographics (age, income, ethnicity, dialect) or preferences?* Answered: the listed fields work, plus campaign and organisation contact person. No demographic fields; this also matches PRD §3.
+2. *Operations dashboard (active donors, beneficiaries, inventory)?* Not needed for Phase 1: the dashboard covers donor figures only (DM5), with donations by campaign added for FFFA's campaign reporting.
+
+**Still open:** hosting and who owns and maintains the system after handover (before 28 Oct).
