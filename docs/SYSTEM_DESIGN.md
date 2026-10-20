@@ -1,8 +1,10 @@
 # FFFA Donor Management MVP — System Design
 
-**Version:** v1.1 (19 Oct 2026, includes Chris's review) · **Status:** Reviewed by Systems lead · **Source of truth:** PRD v2 (8 Oct 2026) · **Owner:** Systems workstream
+**Version:** v1.2 (20 Oct 2026, includes FFFA's feedback) · **Status:** Reviewed by Systems lead · **Source of truth:** PRD v2 + FFFA feedback of 20 Oct (to be folded into PRD v3) · **Owner:** Systems workstream
 
-This document describes how we build Phase 1 (DM1–DM10) by 28 Oct 2026. Anything not in PRD v2 is out of scope unless the team agrees to add it.
+This document describes how we build Phase 1 (DM1–DM10) by 28 Oct 2026. Anything not in PRD v2 or FFFA's 20 Oct feedback is out of scope unless the team agrees to add it.
+
+**What changed in v1.2 (FFFA feedback, 20 Oct):** campaign on donations; organisation + contact person; major donor rule ($5,000+/yr or 3+ years, or tagged by staff); one-off donors lapse after 6 months; impact unit S$10 = 1 meal for one elderly person; multiple grant/sponsor due dates per donor; in-kind donations; failed monthly payments; "mark as sent" keeps the sent message on the donor's profile; import matching across Giving.sg and GIVE.asia; a documented path to add NRIC/UEN later. Schema changes land as migration `002` (001 is merged).
 
 ---
 
@@ -75,11 +77,12 @@ flowchart LR
 erDiagram
     STAFF ||--o{ DONOR : "relationship owner"
     DONOR ||--o{ DONATION : makes
+    DONOR ||--o{ KEY_DATE : "has due dates"
     DONOR ||--o{ ENGAGEMENT : "contacted via"
     DONOR ||--o{ FOLLOW_UP : "needs"
     DONOR ||--o{ NOTE : has
     FOLLOW_UP ||--o| AI_DRAFT : "may have"
-    FOLLOW_UP ||--o| ENGAGEMENT : "completed as"
+    AI_DRAFT ||--o| ENGAGEMENT : "sent as"
     STAFF ||--o{ ACTIVITY_LOG : performs
 
     STAFF {
@@ -91,19 +94,19 @@ erDiagram
     }
     DONOR {
         uuid id PK
-        text first_name
-        text last_name
+        text donor_type "individual | corporate | grant_funder"
         text organisation_name "corporates / grant funders"
+        text first_name "individual, or contact person"
+        text last_name
+        text contact_title "contact person's role, organisations only"
         text preferred_name "used in messages"
         text email
         text mobile
-        text donor_type "individual | corporate | grant_funder"
-        date key_date "renewal / sponsorship expiry / report due"
-        text key_date_label
         uuid relationship_owner FK
         text how_they_know_fffa
         text_array programme_interest "RTE, Food Redistribution, KidsLuvIt, General"
         bool also_volunteers
+        bool major_override "staff can tag as major"
         text next_action
         date next_action_due
         timestamptz archived_at "soft delete"
@@ -113,24 +116,40 @@ erDiagram
         uuid id PK
         uuid donor_id FK
         date donated_on
-        numeric amount_sgd
-        text channel "give_asia | giving_sg | bank | paynow | other"
-        text event "campaign / event, optional"
+        text kind "cash | in_kind"
+        numeric amount_sgd "cash only"
+        text in_kind_description "e.g. 200 packs of rice"
+        numeric estimated_value_sgd "in-kind only"
+        text channel "give_asia | giving_sg | bank | paynow | in_person | other"
+        text external_ref "platform transaction id"
+        text campaign "e.g. Steps for Meals"
         bool is_recurring
         numeric monthly_amount_sgd
+        text payment_status "succeeded | failed"
         text programme
         bool thanked
         timestamptz voided_at "never deleted"
         text void_reason
     }
+    KEY_DATE {
+        uuid id PK
+        uuid donor_id FK
+        text kind "sponsorship_expiry | grant_report | grant_renewal | other"
+        date due_on
+        text label "e.g. Q4 report to XYZ Foundation"
+        timestamptz completed_at
+    }
     ENGAGEMENT {
         uuid id PK
         uuid donor_id FK
         uuid follow_up_id FK "nullable"
+        uuid ai_draft_id FK "nullable"
         date engaged_on
         text channel "email | call | whatsapp | meeting | event | other"
-        text event
+        text campaign
         text summary
+        text message_subject "what was actually sent"
+        text message_body
         uuid staff_id FK
     }
     NOTE {
@@ -144,7 +163,8 @@ erDiagram
     FOLLOW_UP {
         uuid id PK
         uuid donor_id FK
-        text reason "thank_you_due | cadence_due | lapsed | anniversary | key_date | upgrade_candidate | manual"
+        uuid key_date_id FK "key_date reason only"
+        text reason "thank_you_due | cadence_due | lapsed | anniversary | key_date | upgrade_candidate | failed_payment | manual"
         text dedupe_key "donor + reason + period"
         text status "pending | snoozed | done | dismissed"
         date due_on
@@ -160,14 +180,15 @@ erDiagram
         text subject
         text body_generated
         text body_final
-        text status "draft | approved | discarded"
+        text status "draft | approved | sent | discarded"
         uuid approved_by FK
         timestamptz approved_at
+        timestamptz sent_at
     }
     ACTIVITY_LOG {
         bigint id PK
         uuid actor FK
-        text action "donor.create | donation.void | followup.complete | ai.generate | ai.approve | import.run ..."
+        text action "donor.create | donation.void | followup.complete | ai.generate | ai.approve | ai.sent | import.run ..."
         text entity_type
         uuid entity_id
         jsonb diff "changed fields only, no full PII dump"
@@ -175,35 +196,48 @@ erDiagram
     }
 ```
 
-**Computed, never stored** — a `donor_summary` view derives these on read so they can't go stale:
-last donation (date, amount, event), last engagement (date, channel), average donation amount, average days between donations, 12-month giving total, **tier** and **days since last engagement**.
+`donors.key_date` / `key_date_label` from v1.1 move into the `KEY_DATE` table, so a grant funder can have a report deadline **and** a renewal date. `donations.event` becomes `campaign`.
 
-**Tiers (internal only).** `tier_settings` holds Bronze / Silver / Gold / Diamond with a 12-month giving threshold (e.g. ≥ S$5,000 = Gold) and a **contact cadence in days** per tier. Tier is calculated from 12-month giving, never set by hand. Tiers flagged `personal_outreach` (default: Diamond) are excluded from AI drafting, per PRD "major donors get a human". Tiers are never sent to the AI or shown to donors.
+**Organisations.** A corporate or grant funder is one donor record: `organisation_name` is the donor, and first/last name, `contact_title`, email and mobile describe the contact person. Messages greet the contact person by name. Campaign + organisation together support FFFA's campaign reporting and grant matching.
 
-Other config tables: `rule_settings` (thresholds, editable by admin) and `org_settings` (impact unit, e.g. "S$3 = 1 RTE meal", org signature).
+**In-kind donations** (food, essentials) are donations with `kind = in_kind`, a description and an estimated value. They show on the profile and in reports, and they get thank-yous, but tiers and the major rule count **cash only**.
 
-**Data guardrails (PRD §3):** no NRIC/FIN/UEN, no age/income/ethnicity; dummy or de-identified data only until FFFA authorises live data.
+**Computed, never stored**: a `donor_summary` view derives these on read so they can't go stale:
+last donation (date, amount, campaign), last engagement (date, channel), average donation amount, average days between donations, 12-month cash giving, years with FFFA, **tier**, **is_major** and **days since last engagement**. Failed payments and voided donations are excluded from all totals.
+
+**Major donors (FFFA rule).** `is_major` = 12-month cash giving ≥ S$5,000 **or** first gift ≥ 3 years ago **or** `major_override` set by staff. Both thresholds live in `org_settings`. Major donors get personal outreach from staff: they still appear in the queue, but AI drafting is disabled for them (PRD: "major and long-standing donors get a human").
+
+**Tiers (internal only)** stay separate from "major": `tier_settings` holds Bronze / Silver / Gold / Diamond with a 12-month giving threshold and a **contact cadence in days** per tier, used by the `cadence_due` rule. Tier is calculated, never set by hand, and never sent to the AI or shown to donors.
+
+Other config tables: `rule_settings` (thresholds, editable by admin) and `org_settings` (impact unit **S$10 = 1 meal for one elderly person**, major-donor thresholds, org signature).
+
+**Data guardrails (PRD §3):** no NRIC/FIN/UEN, no age/income/ethnicity; **dummy data only** (confirmed by FFFA).
+
+**Adding NRIC/UEN later (for IRAS tax deduction receipts)** needs no rebuild: a separate `tax_identities` table (donor_id, id_type NRIC/FIN/UEN, encrypted value, consent date) added by its own migration, readable by admins only, never returned by donor list/profile endpoints and never sent to the AI. Donation records already carry date, amount, kind and channel, which an IRAS export needs.
 
 ---
 
 ## 4. Follow-up rules engine (DM9)
 
-Runs daily (cron) and on demand ("Refresh queue" button). Each rule is a pure function `(donor, donations, settings, today) → FollowUpCandidate | null`, so rules are easy to unit-test and to add later.
+Runs daily (cron) and on demand ("Refresh queue" button). Each rule is a pure function `(donor, donations, key dates, settings, today) → FollowUpCandidate | null`, so rules are easy to unit-test and to add later.
 
-| Rule | Fires when | Default threshold (FFFA to confirm) | Priority |
+| Rule | Fires when | Default threshold | Priority |
 |---|---|---|---|
-| `thank_you_due` | A donation has `thanked = false` and is ≥ N days old | N = 3 days | High |
+| `thank_you_due` | A donation (cash or in-kind) has `thanked = false` and is ≥ N days old | N = 3 days | High |
+| `failed_payment` | A recurring donor's latest monthly payment has `payment_status = failed` | Within 7 days of the failure | High |
+| `key_date` | A `KEY_DATE` (sponsorship expiry, grant report, grant renewal) is due within N days and not completed; one follow-up per key date | N = 30 | High |
 | `cadence_due` | Days since last engagement ≥ the donor's tier cadence (going cold) | Per tier in `tier_settings` | High |
-| `lapsed` | Recurring donor with no donation for N days, or one-off donor with none for M days | N = 45, M = 365 | High |
-| `key_date` | `key_date` (renewal / sponsorship expiry / grant report) within N days | N = 30 | High |
+| `lapsed` | Recurring donor with no successful donation for N days, or one-off donor with none for M days | N = 45, **M = 180 (6 months, FFFA)** | High |
 | `anniversary` | First-donation anniversary within the next N days | N = 7 | Medium |
 | `upgrade_candidate` | Recurring at the same monthly amount for ≥ 12 months, not asked in the last 12 months | 12 months | Low |
 
-**Idempotency:** each candidate has a `dedupe_key` (e.g. `donor:123|lapsed|2026-10`). The engine upserts on that key, so re-running never duplicates and a completed follow-up is not recreated in the same period.
+Thresholds confirmed by FFFA on 20 Oct ("defaults are fine", except one-off lapse at 6 months).
 
-**Completing a follow-up** records an `ENGAGEMENT` (date, channel, summary), which resets that donor's cadence clock.
+**Idempotency:** each candidate has a `dedupe_key` (e.g. `donor:123|lapsed|2026-10`, or `keydate:456` for key dates). The engine upserts on that key, so re-running never duplicates and a completed follow-up is not recreated in the same period.
 
-**Personal-outreach tiers:** still appear in the queue, but are tagged "personal outreach" and the AI draft button is disabled for them (PRD: major donors get a human).
+**Completing a follow-up** records an `ENGAGEMENT` (date, channel, summary, and the message if one was sent), which resets that donor's cadence clock. Completing a `key_date` follow-up can also mark the key date done.
+
+**Major donors:** still appear in the queue, tagged "personal outreach", with the AI draft button disabled.
 
 ---
 
@@ -220,25 +254,30 @@ sequenceDiagram
 
     Staff->>UI: "Draft follow-up" on donor / queue item
     UI->>API: POST /api/follow-ups/:id/draft
-    API->>DB: Load donor, last 3 donations, recent notes, settings
+    API->>DB: Load donor, recent donations, recent notes, settings
     API->>AI: Build context (minimised) + reason template
     AI->>G: Prompt (system + template + context), JSON schema
     G-->>AI: { subject, body }
     AI->>DB: Save AI_DRAFT (status = draft, prompt_version)
-    API->>DB: Log ai.generate
     API-->>UI: Draft
     Staff->>UI: Edit, then Approve
-    UI->>API: POST /api/drafts/:id/approve (body_final)
+    UI->>API: POST /api/drafts/:id/approve
     API->>DB: status = approved, log ai.approve
-    UI-->>Staff: Copy to clipboard / open in email client
+    UI-->>Staff: Copy / open in email client
+    Staff->>UI: Sends from own email, then "Mark as sent"
+    UI->>API: POST /api/drafts/:id/mark-sent (channel)
+    API->>DB: status = sent, ENGAGEMENT with full message, follow-up done, log ai.sent
 ```
 
-- **Prompt templates per reason** (thank-you, lapsed, anniversary, key date, upgrade ask), versioned in code (`prompt_version`) so we can compare outputs.
-- **Context minimisation:** the model gets first name, donor type, tenure, donation amounts/dates/programme, relationship notes, the impact unit and the reason. **Never** email, mobile or address.
-- **Tone guardrails** in the system prompt: warm, specific, no guilt, upgrade asks modest and concrete ("S$10 → S$15 = X more meals"), Singapore English, FFFA voice.
-- **Nothing sends from the system.** Approve = copy or `mailto:`; sending stays with staff (PRD out-of-scope).
+- **The sent message stays with FFFA** (FFFA feedback): "Mark as sent" saves the exact subject and body on an engagement, so the full conversation history lives on the donor's profile, not only in a staff inbox. Messages staff write themselves (e.g. to major donors) can be logged the same way through `POST /api/donors/:id/engagements`.
+- **Prompt templates per reason** (thank-you, failed payment, key date, check-in, lapsed, anniversary, upgrade ask), versioned in code (`prompt_version`) so we can compare outputs.
+- **Context minimisation:** the model gets the display name (contact person for organisations), donor type, organisation name, tenure, donation amounts/dates/campaign/programme, in-kind descriptions, relationship notes, the impact unit and the reason. **Never** email, mobile, tier or tax identifiers; notes are scrubbed of emails, phone numbers and NRICs.
+- **Impact unit:** S$10 = 1 meal for one elderly person. Meal counts and upgrade figures are computed in code (e.g. "S$30 → S$45 a month = 1 more meal each month"), never by the model.
+- **Failed payments:** a short, low-friction note with no guilt, asking them to update their card details on the platform they give through.
+- **Tone guardrails** in the system prompt: warm, specific, no guilt, at most one modest ask, Singapore English, FFFA voice.
+- **Nothing sends from the system.** Sending stays with staff (PRD out of scope); FFFA confirmed they like that "someone on the team always reviews and sends every message".
 - **Failure mode:** if Gemini fails or times out, fall back to the static template for that reason (`source = template_fallback`) so staff are never blocked.
-- **Evaluation:** a small fixed set of ~10 dummy donors × 5 reasons; we review outputs for tone, accuracy (no invented facts) and length each time prompts change.
+- **Evaluation:** a small fixed set of ~10 dummy donors × each reason; we review outputs for tone, accuracy (no invented facts) and length each time prompts change.
 
 ---
 
@@ -252,14 +291,15 @@ All routes require a valid staff session. Writes go through the activity logger.
 | POST / PATCH | `/api/donors`, `/api/donors/:id` | DM1 |
 | GET | `/api/donors/:id` (profile: summary, donations, engagements, notes, follow-ups, drafts) | DM3 |
 | POST / DELETE | `/api/donors/:id/notes`, `/api/notes/:id` (soft delete) | DM3 |
-| POST | `/api/donors/:id/donations`, `/api/donations/:id/void` | DM8 |
+| POST | `/api/donors/:id/donations` (cash or in-kind), `/api/donations/:id/void` | DM8 |
 | POST | `/api/donors/:id/engagements` | DM3, DM4 |
 | GET | `/api/follow-ups?status=pending` (the "Today" queue) | DM9 |
 | POST | `/api/follow-ups/refresh` | DM9 |
 | POST | `/api/follow-ups/:id/complete` (creates an engagement) · `/snooze` · `/dismiss` | DM4 |
-| POST | `/api/follow-ups/:id/draft` · `/api/drafts/:id/approve` · `/api/drafts/:id/discard` | DM10 |
+| POST | `/api/follow-ups/:id/draft` · `/api/drafts/:id/approve` · `/api/drafts/:id/mark-sent` · `/api/drafts/:id/discard` | DM10 |
+| GET / POST / PATCH | `/api/donors/:id/key-dates`, `/api/key-dates/:id` (incl. mark complete) | DM9 |
 | GET | `/api/dashboard` (aggregates + monthly series) | DM5 |
-| POST | `/api/import/preview` · `/api/import/commit` (CSV) | DM6 |
+| POST | `/api/import/preview` · `/api/import/commit` (CSV; see import matching below) | DM6 |
 | GET / PATCH | `/api/settings` (admin: rules, tiers, impact unit) | DM9, DM10 |
 | GET | `/api/activity?entity=` (admin only) | DM7 |
 | POST / DELETE | `/api/donors/:id/archive` · `DELETE /api/donors/:id` (admin only, PDPA requests) | DM1 |
@@ -274,6 +314,12 @@ All routes require a valid staff session. Writes go through the activity logger.
 | Follow-up | Dismiss | Keeps queue history |
 | AI draft | Discard | Keeps generation history for evaluation |
 | Activity log | Never | Audit trail |
+
+**Import matching (Giving.sg and GIVE.asia, FFFA feedback).** The same person often gives on both platforms. On import:
+1. **Donations** are de-duplicated by `(channel, external_ref)`, so re-importing the same export never double-counts.
+2. **Donors** are matched by normalised email, then by normalised mobile (+65 stripped, digits only).
+3. Rows that match on name only, or match two different donors, are **not merged automatically**: the preview lists them for staff to confirm "same person" or "new donor".
+4. Matched donations attach to the existing donor with their own `channel`, so the profile shows giving across both platforms.
 
 ---
 
@@ -297,34 +343,31 @@ All routes require a valid staff session. Writes go through the activity logger.
 - Secrets (`GEMINI_API_KEY`, Supabase service key) only in server env.
 - Activity log for every write and every AI generate/approve (who, what, when, changed fields).
 - Dashboards and exports show aggregates only; no bulk PII export in Phase 1.
-- Dummy data in all environments until FFFA signs off on live data.
+- Dummy data in all environments (confirmed by FFFA, 20 Oct).
+- NRIC/UEN, when added later, go in a separate encrypted, admin-only table (section 3).
 
 ---
 
-## 9. Changes from the current repo
+## 9. Implementation status
 
-| Current (AI Studio demo) | Phase 1 plan |
+| Done (merged in PR #1) | Next |
 |---|---|
-| In-memory arrays in `server.ts` | Supabase Postgres |
-| No login | Supabase Auth + staff allowlist |
-| Single 1,200-line `App.tsx` | `src/pages/*`, `src/components/*`, `src/lib/api.ts` |
-| Single `server.ts` | `server/routes/*`, `server/services/{rules,ai,activity}.ts`, `server/db.ts` |
-| Newsletter studio, campaigns, AI insights | Removed from nav (Phase 2 per PRD); code kept on a branch |
-| Generic sample data with real-looking corporate emails | Clearly fictional FFFA-style seed data (RTE, KidsLuvIt, Give Asia, Giving SG) |
-| README describes demo features | Rewrite README to match this design once approved |
+| Schema `001_init.sql`, DB layer (Postgres / PGlite), auth hook, activity log, shared types | Migration `002`: FFFA feedback fields (campaign, contact title, major override, in-kind, payment status, external ref, key dates table, sent messages) |
+| DM10 draft / approve / discard with template fallback | DM10 "mark as sent", major-donor block, S$10 impact unit, failed-payment template |
+| Old AI Studio UI kept on `legacy/ai-studio-demo` | Slices per section 10 |
 
 ---
 
 ## 10. Workstream ownership (Systems)
 
-Estimates are in ideal working days, sized per task so the load is even.
+Estimates are in ideal working days. v1.2 adds about 4 days of work from FFFA's feedback, spread so the load stays even (activity log moves from Swaraj to Lynn).
 
 | Person | Owns | PRD | Days |
 |---|---|---|---|
-| **Ghanashyam (lead)** | Architecture, shared schema/types and repo restructure (1.5) · AI drafting service, prompts and approve flow (2.5) · AI evaluation with Lynn (0.5) · integration, stand-ups, demo prep (1.5) | DM10 | ~6 |
-| **Swaraj** | Donor, donation and notes API (2) · follow-up rules engine and follow-up API (3) · activity log (1) | DM1–DM4, DM8, DM9, DM7 (log) | ~6 |
-| **Chris** | Auth and staff access (1.5) · screens: Login, Today, Donors, Donor profile, Import, Settings (5) | DM7 (auth), DM1–DM4 (UI) | ~6.5 |
-| **Lynn** | Seed data (0.5) · CSV import back end (1.5) · dashboard API and screen (1.5) · AI evaluation set (0.5) · test checklist (1) | DM5, DM6, DM10 (eval) | ~5 |
+| **Ghanashyam (lead)** | Architecture, schema/types, migration 002 (1.5) · AI drafting incl. mark-as-sent, major block, impact unit, failed-payment template (3) · AI evaluation with Lynn (0.5) · integration, stand-ups, demo prep (1.5) | DM10 | ~6.5 |
+| **Swaraj** | Donor, donation (cash + in-kind) and notes API (2.5) · rules engine incl. key dates and failed payments, follow-up API (3.5) · key dates API (0.5) | DM1–DM4, DM8, DM9 | ~6.5 |
+| **Chris** | Auth and staff access (1.5) · screens: Login, Today, Donors, Donor profile (incl. organisation contact, in-kind, key dates, conversation history), Import, Settings (5.5) | DM7 (auth), DM1–DM4 (UI) | ~7 |
+| **Lynn** | Seed data (0.5) · CSV import incl. cross-platform matching (2.5) · dashboard API and screen (1.5) · activity log read endpoint (1) · AI evaluation set (0.5) · test checklist (1) | DM5, DM6, DM7 (log), DM10 (eval) | ~7 |
 
 **Ways of working**
 - **Day 1, together:** agree the shared schema, TypeScript types and API conventions before building, so everyone can work in parallel.
@@ -340,25 +383,32 @@ People & Processes (Fiona's team) provides: FFFA field confirmation, rule thresh
 
 | Date | Milestone |
 |---|---|
-| 19 Oct | Design v1.1; platform foundation (schema, types, DB layer, auth hook, activity log hook, AI service) |
-| 20 Oct | Donor API, rules engine core, Today + profile screens on seed data; AI draft → approve working |
-| **21 Oct** | **Session 2: team demo to mentor of Today → profile → AI draft → approve** |
-| 24 Oct | Engagements, tiers, dashboard (with charts), import, settings; FFFA testing |
-| 27 Oct | Fixes, staff guide, handover notes |
+| 19 Oct | ✅ Platform foundation + DM10 draft/approve merged (PR #1) |
+| 20 Oct | Design v1.2 with FFFA feedback; PRD v3 draft to Fiona |
+| **21 Oct** | **Session 2: recalibrate as a team and build** (walk through v1.2, confirm owners, start slices) |
+| 23 Oct | Migration 002; donors/donations/notes API; rules engine core; Today + profile screens on seed data |
+| 25 Oct | Full flow: queue → draft → approve → mark as sent → history on profile; import + dashboard |
+| 26–27 Oct | FFFA testing (tester confirmed), fixes, staff guide, handover notes |
 | **28 Oct** | **Final demo and handover** |
 
 ---
 
-## 12. Assumptions and open questions
+## 12. Confirmed decisions, assumptions and open questions
+
+**Confirmed by FFFA (20 Oct)**
+- Donor fields as listed, plus campaign and organisation contact person.
+- Major donor: S$5,000+ a year or 3+ years with FFFA, or tagged by staff.
+- Rule defaults fine; one-off donors lapse after 6 months.
+- Tester: FFFA's respondent. Data: dummy only. Impact unit: S$10 = one meal for one elderly person.
 
 **Assumptions** (we build on these; FFFA can correct them anytime)
-- Donor fields: as listed in section 3, built and tested on dummy data until FFFA shares a template or de-identified sample.
-- Rule thresholds: the defaults in section 4, editable by an admin in Settings.
-- Impact unit: a placeholder (e.g. "S$X = 1 RTE meal") until FFFA confirms the figure.
 - AI drafts: any staff user can approve; major donors are excluded from AI drafting.
-- Email: staff send from their own email client; nothing sends from the system.
+- Email: staff send from their own email client and then mark the message as sent.
+- In-kind donations count towards thank-yous and reports, not towards tiers or major status.
 - Hosting and post-handover ownership: decided with FFFA before 28 Oct; the build stays container-portable.
 
-**Open questions** (already sent to FFFA in the question sheet)
-1. **Do you hold any other donor data, such as demographics (age, income, ethnicity, dialect) or preferences?** FFFA's stated purpose is clarity and comparison. *Design note:* PRD §3 keeps these fields out of Phase 1; if FFFA has them, we revisit as a Phase 2 decision with privacy controls.
-2. **Does your team use a dashboard for key operational figures (active donors, active beneficiaries, inventory availability, etc.)?** *Design note:* the Phase 1 dashboard (DM5) covers donor figures only; beneficiaries and inventory stay out of scope, but the answer tells us what staff are used to seeing.
+**Question sheet (answered by FFFA's email, 20 Oct)**
+1. *Other donor data such as demographics (age, income, ethnicity, dialect) or preferences?* Answered: the listed fields work, plus campaign and organisation contact person. No demographic fields; this also matches PRD §3.
+2. *Operations dashboard (active donors, beneficiaries, inventory)?* Not needed for Phase 1: the dashboard covers donor figures only (DM5), with donations by campaign added for FFFA's campaign reporting.
+
+**Still open:** hosting and who owns and maintains the system after handover (before 28 Oct).
