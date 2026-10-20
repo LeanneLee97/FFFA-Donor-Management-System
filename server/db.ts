@@ -22,7 +22,25 @@ export interface Db {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
   /** Run several statements with no parameters (migrations). */
   exec(sql: string): Promise<void>;
+  /** Runs fn atomically: everything commits together or nothing does. Don't nest. */
+  transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T>;
   close(): Promise<void>;
+}
+
+type Querier = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+
+/** A Db bound to one connection inside an open transaction. */
+function txDb(conn: Querier): Db {
+  return {
+    async query<T>(sql: string, params?: unknown[]) {
+      return (await conn.query(sql, params)).rows as T[];
+    },
+    async exec(sql) {
+      await conn.query(sql);
+    },
+    transaction: () => Promise.reject(new Error('Nested transactions are not supported')),
+    close: () => Promise.reject(new Error('Cannot close a transaction')),
+  };
 }
 
 /**
@@ -40,6 +58,20 @@ export async function createDb(opts: { databaseUrl?: string; dataDir?: string } 
       async exec(sql) {
         await pool.query(sql);
       },
+      async transaction(fn) {
+        const client = await pool.connect();
+        try {
+          await client.query('begin');
+          const result = await fn(txDb(client as unknown as Querier));
+          await client.query('commit');
+          return result;
+        } catch (err) {
+          await client.query('rollback');
+          throw err;
+        } finally {
+          client.release();
+        }
+      },
       close: () => pool.end(),
     };
   }
@@ -55,6 +87,7 @@ export async function createDb(opts: { databaseUrl?: string; dataDir?: string } 
     async exec(sql) {
       await lite.exec(sql);
     },
+    transaction: (fn) => lite.transaction((tx) => fn(txDb(tx as unknown as Querier))),
     close: () => lite.close(),
   };
 }
