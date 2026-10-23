@@ -162,6 +162,28 @@ export interface AiDraft {
   sent_at: IsoTimestamp | null;
 }
 
+/** GET /api/follow-ups: an open follow-up with what the queue needs to show. */
+export interface QueueItem extends FollowUp {
+  donor_name: string;
+  organisation_name: string | null;
+  donor_type: DonorType;
+  is_major: boolean;
+  key_date_label: string | null;
+  /** Latest draft for this follow-up that is still in play (draft or approved), if any. */
+  open_draft: AiDraft | null;
+}
+
+/** GET /api/donors/:id */
+export interface DonorProfile {
+  donor: Donor;
+  summary: DonorSummary | null;
+  donations: Donation[];
+  engagements: Engagement[];
+  notes: Note[];
+  key_dates: KeyDate[];
+  follow_ups: FollowUp[];
+}
+
 /** Standard error body for every API route. */
 export interface ApiError {
   error: string;

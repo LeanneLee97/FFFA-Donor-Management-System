@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import { createApp } from './app.ts';
 import { createDb, migrate } from './db.ts';
+import { seedDemo } from './dev/demoSeed.ts';
 import { devStaffResolver, supabaseStaffResolver } from './middleware/auth.ts';
 import { DEFAULT_GEMINI_MODEL, createGeminiClient } from './services/ai/client.ts';
 
@@ -22,6 +23,12 @@ async function main() {
   });
   const ran = await migrate(db);
   if (ran.length) console.log(`Applied migrations: ${ran.join(', ')}`);
+
+  if (process.env.DEMO_SEED === 'true') {
+    if (authMode !== 'dev') throw new Error('Demo data can only be loaded with AUTH_MODE=dev');
+    const added = await seedDemo(db);
+    console.log(added ? `Loaded ${added} demo donors` : 'Demo donors already loaded');
+  }
 
   const key = process.env.GEMINI_API_KEY;
   const ai = key ? createGeminiClient(key, process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL) : null;
