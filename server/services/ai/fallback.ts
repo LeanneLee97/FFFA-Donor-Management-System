@@ -7,6 +7,10 @@ export interface DraftText {
 
 const sgd = (n: number) => `S$${Number.isInteger(n) ? n : n.toFixed(2)}`;
 
+/** '2026-11-14' → '14 November 2026', so dates in messages read naturally. */
+const longDate = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
 function units(ctx: DraftContext, n: number): string {
   return `${n} ${n === 1 ? ctx.impact.unitSingular : ctx.impact.unitPlural}`;
 }
@@ -57,7 +61,7 @@ export function fallbackDraft(ctx: DraftContext): DraftText {
     case 'key_date':
       return {
         subject: `${ctx.keyDate?.label ?? 'An upcoming date'}: a note from ${ctx.orgName}`,
-        body: `${hi}\n\nA quick note that ${ctx.keyDate ? `${ctx.keyDate.label} is due on ${ctx.keyDate.date}` : 'an important date is coming up'}. Thank you for ${you} partnership with ${ctx.orgName}, and do let us know if there is anything we can help with.${sign}`,
+        body: `${hi}\n\nA quick note that ${ctx.keyDate ? `${ctx.keyDate.label} is due on ${longDate(ctx.keyDate.date)}` : 'an important date is coming up'}. Thank you for ${you} partnership with ${ctx.orgName}, and do let us know if there is anything we can help with.${sign}`,
       };
     case 'upgrade_candidate':
       if (ctx.upgrade) {
