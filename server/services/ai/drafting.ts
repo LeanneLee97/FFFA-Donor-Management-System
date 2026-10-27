@@ -12,21 +12,15 @@ import type {
   Uuid,
 } from '../../../shared/types.ts';
 import type { Db } from '../../db.ts';
+import { HttpError } from '../../lib/errors.ts';
 import { logActivity } from '../activity.ts';
 import type { AiClient } from './client.ts';
 import { buildDraftContext, type DraftInputs } from './context.ts';
 import { fallbackDraft, type DraftText } from './fallback.ts';
 import { PROMPT_VERSION, SYSTEM_PROMPT, buildUserPrompt } from './prompts.ts';
 
-export class DraftError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+/** Kept as its own name so DM10 errors are easy to spot; behaves like any HttpError. */
+export class DraftError extends HttpError {}
 
 const DRAFT_COLUMNS = `id, follow_up_id, donor_id, prompt_version, source, subject, body_generated,
   body_final, status, created_by, approved_by, approved_at, sent_at`;
@@ -95,6 +89,14 @@ export async function createDraft(db: Db, ai: AiClient | null, followUpId: Uuid,
     throw new DraftError(422, 'PERSONAL_OUTREACH', 'Major donor: personal outreach from staff, AI drafts are disabled');
   }
 
+  const [approved] = await db.query<{ id: Uuid }>(
+    `select id from ai_drafts where follow_up_id = $1 and status = 'approved' limit 1`,
+    [followUpId],
+  );
+  if (approved) {
+    throw new DraftError(409, 'ALREADY_APPROVED', 'This follow-up already has an approved message: mark it as sent or discard it first');
+  }
+
   const ctx = buildDraftContext(inputs);
   let text: DraftText;
   let source: AiDraft['source'] = 'ai';
@@ -112,27 +114,35 @@ export async function createDraft(db: Db, ai: AiClient | null, followUpId: Uuid,
     source = 'template_fallback';
   }
 
-  const [draft] = await db.query<AiDraft>(
-    `insert into ai_drafts (follow_up_id, donor_id, prompt_version, source, subject, body_generated, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7)
-     returning ${DRAFT_COLUMNS}`,
-    [followUpId, inputs.donor.id, PROMPT_VERSION, source, text.subject, text.body, staff.id],
-  );
-  await logActivity(db, {
-    actor: staff.id,
-    action: 'ai.generate',
-    entityType: 'ai_draft',
-    entityId: draft.id,
-    diff: {
-      follow_up_id: followUpId,
-      reason: ctx.reason,
-      source,
-      prompt_version: PROMPT_VERSION,
-      model: source === 'ai' ? ai!.model : null,
-      ...(aiError ? { ai_error: aiError.slice(0, 200) } : {}),
-    },
+  // Regenerating replaces the previous unapproved draft, so only one draft per follow-up is ever open.
+  return db.transaction(async (tx) => {
+    const superseded = await tx.query<{ id: Uuid }>(
+      `update ai_drafts set status = 'discarded' where follow_up_id = $1 and status = 'draft' returning id`,
+      [followUpId],
+    );
+    const [draft] = await tx.query<AiDraft>(
+      `insert into ai_drafts (follow_up_id, donor_id, prompt_version, source, subject, body_generated, created_by)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       returning ${DRAFT_COLUMNS}`,
+      [followUpId, inputs.donor.id, PROMPT_VERSION, source, text.subject, text.body, staff.id],
+    );
+    await logActivity(tx, {
+      actor: staff.id,
+      action: 'ai.generate',
+      entityType: 'ai_draft',
+      entityId: draft.id,
+      diff: {
+        follow_up_id: followUpId,
+        reason: ctx.reason,
+        source,
+        prompt_version: PROMPT_VERSION,
+        model: source === 'ai' ? ai!.model : null,
+        ...(superseded.length ? { replaced_draft_ids: superseded.map((d) => d.id) } : {}),
+        ...(aiError ? { ai_error: aiError.slice(0, 200) } : {}),
+      },
+    });
+    return draft;
   });
-  return draft;
 }
 
 async function loadOpenDraft(db: Db, draftId: Uuid): Promise<AiDraft> {

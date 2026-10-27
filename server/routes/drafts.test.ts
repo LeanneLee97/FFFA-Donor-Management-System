@@ -193,4 +193,25 @@ describe('DM10 AI drafting API', () => {
     const res = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
     expect(res.body.body_generated).toContain('monthly gift on GIVE.asia');
   });
+
+  it('regenerating replaces the open draft, and approved messages block new drafts', async () => {
+    const { followUpId } = await seedFollowUp();
+    const { body: first } = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+    const { body: second } = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(201);
+
+    const statuses = await db.query<{ id: string; status: string }>(`select id, status from ai_drafts order by created_at`);
+    expect(statuses).toEqual([
+      { id: first.id, status: 'discarded' },
+      { id: second.id, status: 'draft' },
+    ]);
+    const [log] = await db.query<{ diff: Record<string, unknown> }>(
+      `select diff from activity_log where entity_id = $1`,
+      [second.id],
+    );
+    expect(log.diff.replaced_draft_ids).toEqual([first.id]);
+
+    await request(app(null)).post(`/api/drafts/${second.id}/approve`).send({ body: 'ok' }).expect(200);
+    const blocked = await request(app(null)).post(`/api/follow-ups/${followUpId}/draft`).expect(409);
+    expect(blocked.body.code).toBe('ALREADY_APPROVED');
+  });
 });
