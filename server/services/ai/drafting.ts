@@ -1,4 +1,16 @@
-import type { AiDraft, Donation, Donor, DonorSummary, FollowUp, Note, Staff, Uuid } from '../../../shared/types.ts';
+import type {
+  AiDraft,
+  Donation,
+  Donor,
+  DonorSummary,
+  Engagement,
+  EngagementChannel,
+  FollowUp,
+  KeyDate,
+  Note,
+  Staff,
+  Uuid,
+} from '../../../shared/types.ts';
 import type { Db } from '../../db.ts';
 import { logActivity } from '../activity.ts';
 import type { AiClient } from './client.ts';
@@ -17,7 +29,7 @@ export class DraftError extends Error {
 }
 
 const DRAFT_COLUMNS = `id, follow_up_id, donor_id, prompt_version, source, subject, body_generated,
-  body_final, status, created_by, approved_by, approved_at`;
+  body_final, status, created_by, approved_by, approved_at, sent_at`;
 
 async function loadInputs(db: Db, followUpId: Uuid): Promise<DraftInputs & { summary: DonorSummary | null }> {
   const [followUp] = await db.query<FollowUp>('select * from follow_ups where id = $1', [followUpId]);
@@ -31,13 +43,23 @@ async function loadInputs(db: Db, followUpId: Uuid): Promise<DraftInputs & { sum
   ]);
   if (!donor) throw new DraftError(404, 'NOT_FOUND', 'Donor not found or archived');
 
-  const [[summary], donations, notes, orgRows] = await Promise.all([
+  const [[summary], donations, [failedDonation], [keyDate], notes, orgRows] = await Promise.all([
     db.query<DonorSummary>('select * from donor_summary where donor_id = $1', [donor.id]),
     db.query<Donation>(
-      `select * from donations where donor_id = $1 and voided_at is null
+      `select * from donations
+       where donor_id = $1 and voided_at is null and payment_status = 'succeeded'
        order by donated_on desc, created_at desc limit 24`,
       [donor.id],
     ),
+    db.query<Donation>(
+      `select * from donations
+       where donor_id = $1 and voided_at is null and payment_status = 'failed'
+       order by donated_on desc, created_at desc limit 1`,
+      [donor.id],
+    ),
+    followUp.key_date_id
+      ? db.query<KeyDate>('select * from key_dates where id = $1', [followUp.key_date_id])
+      : Promise.resolve([] as KeyDate[]),
     db.query<Note>(
       `select * from notes where donor_id = $1 and deleted_at is null order by created_at desc limit 3`,
       [donor.id],
@@ -51,11 +73,14 @@ async function loadInputs(db: Db, followUpId: Uuid): Promise<DraftInputs & { sum
     donor,
     summary: summary ?? null,
     donations,
+    failedDonation: failedDonation ?? null,
+    keyDate: keyDate ?? null,
     notes,
     org: {
       orgName: org.org_name ?? 'Free Food For All',
       impactUnitSgd: Number(org.impact_unit_sgd ?? 0),
-      impactUnitLabel: org.impact_unit_label ?? 'meal',
+      impactUnitSingular: org.impact_unit_singular ?? 'meal',
+      impactUnitPlural: org.impact_unit_plural ?? 'meals',
       signature: org.signature ?? 'The Free Food For All team',
     },
     today: new Date().toISOString().slice(0, 10),
@@ -65,9 +90,9 @@ async function loadInputs(db: Db, followUpId: Uuid): Promise<DraftInputs & { sum
 /** DM10: generate a draft for a follow-up. AI if available, otherwise the reason's template. */
 export async function createDraft(db: Db, ai: AiClient | null, followUpId: Uuid, staff: Staff): Promise<AiDraft> {
   const inputs = await loadInputs(db, followUpId);
-  if (inputs.summary?.personal_outreach) {
-    // PRD: major donors get personal outreach from staff, never an AI draft.
-    throw new DraftError(422, 'PERSONAL_OUTREACH', 'This donor gets personal outreach; AI drafts are disabled');
+  if (inputs.summary?.is_major) {
+    // PRD + FFFA: major donors (S$5,000+/yr, 3+ years, or tagged) get personal outreach, never an AI draft.
+    throw new DraftError(422, 'PERSONAL_OUTREACH', 'Major donor: personal outreach from staff, AI drafts are disabled');
   }
 
   const ctx = buildDraftContext(inputs);
@@ -156,4 +181,57 @@ export async function discardDraft(db: Db, draftId: Uuid, staff: Staff): Promise
   if (!draft) throw new DraftError(409, 'DRAFT_CLOSED', 'Draft was changed by someone else');
   await logActivity(db, { actor: staff.id, action: 'ai.discard', entityType: 'ai_draft', entityId: draftId });
   return draft;
+}
+
+const ENGAGEMENT_CHANNELS: EngagementChannel[] = ['email', 'call', 'whatsapp', 'meeting', 'event', 'other'];
+
+/**
+ * After staff send an approved message themselves, they mark it as sent. The exact text becomes an
+ * engagement on the donor's profile (so the conversation stays with FFFA) and the follow-up is done.
+ */
+export async function markDraftSent(
+  db: Db,
+  draftId: Uuid,
+  staff: Staff,
+  opts: { channel?: EngagementChannel } = {},
+): Promise<{ draft: AiDraft; engagement: Engagement }> {
+  const channel = opts.channel ?? 'email';
+  if (!ENGAGEMENT_CHANNELS.includes(channel)) {
+    throw new DraftError(400, 'INVALID_CHANNEL', `Channel must be one of: ${ENGAGEMENT_CHANNELS.join(', ')}`);
+  }
+
+  return db.transaction(async (tx) => {
+    const [draft] = await tx.query<AiDraft>(
+      `update ai_drafts set status = 'sent', sent_at = now()
+       where id = $1 and status = 'approved'
+       returning ${DRAFT_COLUMNS}`,
+      [draftId],
+    );
+    if (!draft) {
+      const [existing] = await tx.query<AiDraft>('select status from ai_drafts where id = $1', [draftId]);
+      if (!existing) throw new DraftError(404, 'NOT_FOUND', 'Draft not found');
+      throw new DraftError(409, 'NOT_APPROVED', `Only approved drafts can be marked as sent (this one is ${existing.status})`);
+    }
+
+    const [engagement] = await tx.query<Engagement>(
+      `insert into engagements
+         (donor_id, follow_up_id, ai_draft_id, channel, summary, message_subject, message_body, staff_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       returning *`,
+      [draft.donor_id, draft.follow_up_id, draft.id, channel, 'Sent follow-up', draft.subject, draft.body_final, staff.id],
+    );
+    await tx.query(
+      `update follow_ups set status = 'done', completed_by = $2
+       where id = $1 and status in ('pending', 'snoozed')`,
+      [draft.follow_up_id, staff.id],
+    );
+    await logActivity(tx, {
+      actor: staff.id,
+      action: 'ai.sent',
+      entityType: 'ai_draft',
+      entityId: draft.id,
+      diff: { channel, engagement_id: engagement.id, follow_up_id: draft.follow_up_id },
+    });
+    return { draft, engagement };
+  });
 }

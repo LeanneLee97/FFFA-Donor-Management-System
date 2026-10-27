@@ -350,11 +350,12 @@ All routes require a valid staff session. Writes go through the activity logger.
 
 ## 9. Implementation status
 
-| Done (merged in PR #1) | Next |
+| Done (merged) | Next |
 |---|---|
-| Schema `001_init.sql`, DB layer (Postgres / PGlite), auth hook, activity log, shared types | Migration `002`: FFFA feedback fields (campaign, contact title, major override, in-kind, payment status, external ref, key dates table, sent messages) |
-| DM10 draft / approve / discard with template fallback | DM10 "mark as sent", major-donor block, S$10 impact unit, failed-payment template |
-| Old AI Studio UI kept on `legacy/ai-studio-demo` | Slices per section 10 |
+| Schema `001_init.sql` + `002_fffa_feedback.sql` (campaign, contact title, major override, in-kind, payment status, external ref, key dates, sent messages, S$10 impact unit, 6-month lapse) | Donor / donation / key-date API, rules engine (Swaraj) |
+| DB layer (Postgres / PGlite) with transactions, auth hook, activity log, shared types | Supabase auth + screens (Chris) |
+| DM10: draft / approve / mark as sent / discard, major-donor block, failed-payment template, prompt `dm10-v2` | Seed data, import matching, dashboard (Lynn) |
+| Old AI Studio UI kept on `legacy/ai-studio-demo` | AI evaluation set once Gemini key is available |
 
 ---
 

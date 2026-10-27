@@ -7,13 +7,18 @@ export interface DraftText {
 
 const sgd = (n: number) => `S$${Number.isInteger(n) ? n : n.toFixed(2)}`;
 
+function units(ctx: DraftContext, n: number): string {
+  return `${n} ${n === 1 ? ctx.impact.unitSingular : ctx.impact.unitPlural}`;
+}
+
 function impactLine(ctx: DraftContext): string {
   const last = ctx.recentDonations[0];
   if (!last) return '';
-  const units = ctx.impact.lastDonationUnits;
-  return units && units > 0
-    ? ` Your gift of ${sgd(last.amountSgd)} provides around ${units} ${ctx.impact.unitLabel}${units === 1 ? '' : 's'} for families who need them.`
-    : ` Your gift of ${sgd(last.amountSgd)} goes straight into our programmes.`;
+  if (last.kind === 'in_kind') return ` Your gift of ${last.inKindItem} goes straight to the families we serve.`;
+  const n = ctx.impact.lastDonationUnits;
+  return n && n > 0
+    ? ` Your gift of ${sgd(last.amountSgd!)} provides around ${units(ctx, n)}.`
+    : ` Your gift of ${sgd(last.amountSgd!)} goes straight into our programmes.`;
 }
 
 /**
@@ -22,6 +27,7 @@ function impactLine(ctx: DraftContext): string {
  */
 export function fallbackDraft(ctx: DraftContext): DraftText {
   const hi = `Dear ${ctx.donorName},`;
+  const you = ctx.organisationName ? `${ctx.organisationName}'s` : 'your';
   const sign = `\n\n${ctx.signature}`;
   const years = ctx.tenureMonths && ctx.tenureMonths >= 12 ? Math.floor(ctx.tenureMonths / 12) : null;
 
@@ -29,8 +35,15 @@ export function fallbackDraft(ctx: DraftContext): DraftText {
     case 'thank_you_due':
       return {
         subject: `Thank you for supporting ${ctx.orgName}`,
-        body: `${hi}\n\nThank you so much for your recent donation.${impactLine(ctx)} We are truly grateful to have you with us.${sign}`,
+        body: `${hi}\n\nThank you so much for ${you} recent donation.${impactLine(ctx)} We are truly grateful to have you with us.${sign}`,
       };
+    case 'failed_payment': {
+      const f = ctx.failedPayment;
+      return {
+        subject: 'A quick note about your monthly gift',
+        body: `${hi}\n\nThank you for your monthly support of ${ctx.orgName}. We noticed that your ${f?.monthlySgd ? `${sgd(f.monthlySgd)} ` : ''}monthly gift${f ? ` on ${f.platform}` : ''} didn't go through this time. This sometimes happens when a card expires. When convenient, you can update your payment details there. Thank you for being with us.${sign}`,
+      };
+    }
     case 'lapsed':
       return {
         subject: 'We miss you at Free Food For All',
@@ -43,15 +56,16 @@ export function fallbackDraft(ctx: DraftContext): DraftText {
       };
     case 'key_date':
       return {
-        subject: `${ctx.keyDate?.label ?? 'An upcoming date'}: a quick note from ${ctx.orgName}`,
-        body: `${hi}\n\nA quick note that ${ctx.keyDate ? `${ctx.keyDate.label.toLowerCase()} is on ${ctx.keyDate.date}` : 'an important date is coming up'}. Thank you for your partnership, and do let us know if there is anything we can help with.${sign}`,
+        subject: `${ctx.keyDate?.label ?? 'An upcoming date'}: a note from ${ctx.orgName}`,
+        body: `${hi}\n\nA quick note that ${ctx.keyDate ? `${ctx.keyDate.label} is due on ${ctx.keyDate.date}` : 'an important date is coming up'}. Thank you for ${you} partnership with ${ctx.orgName}, and do let us know if there is anything we can help with.${sign}`,
       };
     case 'upgrade_candidate':
       if (ctx.upgrade) {
         const extra = ctx.upgrade.extraUnitsPerMonth;
+        const more = extra > 0 ? `provide around ${extra} more ${extra === 1 ? ctx.impact.unitSingular : ctx.impact.unitPlural} each month` : 'help us reach more families';
         return {
           subject: `Thank you for your monthly support`,
-          body: `${hi}\n\nThank you for giving ${sgd(ctx.upgrade.currentMonthlySgd)} every month. Your steady support keeps our programmes going.\n\nIf you are ever able to, moving to ${sgd(ctx.upgrade.suggestedMonthlySgd)} a month would${extra > 0 ? ` provide around ${extra} more ${ctx.impact.unitLabel}${extra === 1 ? '' : 's'} each month` : ' help us reach more families'}. Either way, we are grateful to have you with us.${sign}`,
+          body: `${hi}\n\nThank you for giving ${sgd(ctx.upgrade.currentMonthlySgd)} every month. Your steady support keeps our programmes going.\n\nIf you are ever able to, moving to ${sgd(ctx.upgrade.suggestedMonthlySgd)} a month would ${more}. Either way, we are grateful to have you with us.${sign}`,
         };
       }
       return fallbackDraft({ ...ctx, reason: 'manual' });
