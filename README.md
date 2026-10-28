@@ -3,9 +3,13 @@
 A staff-facing donor management system for **Free Food For All**, built in the Empact × FFFA AI Impact Sprint (7–28 Oct 2026). Phase 1 gives FFFA one place to keep every donor relationship, surfaces follow-ups automatically, and drafts personal follow-up messages with AI for staff to edit and approve.
 
 - **Requirements:** PRD v2 (shared Drive)
-- **Design:** [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) (also as PDF)
-- **Handover (taking it forward, going live):** [docs/HANDOVER.md](docs/HANDOVER.md) (also as PDF)
-- **Staff guide (using it day to day):** [docs/staff-guide/STAFF_GUIDE.md](docs/staff-guide/STAFF_GUIDE.md) (also as PDF)
+- **Design:** [docs/SYSTEM_DESIGN_v1.3.md](docs/SYSTEM_DESIGN_v1.3.md) (also as PDF)
+- **Setup guide** (configuration, access, approved fields, workflow rules, going live, troubleshooting): [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)
+- **Staff operating guide** (daily and monthly routine, records, duplicates, owners, escalation): [docs/staff-guide/STAFF_GUIDE.md](docs/staff-guide/STAFF_GUIDE.md)
+- **Prompt guide** (setting up, running and changing the system with an AI coding assistant): [docs/PROMPT_GUIDE.md](docs/PROMPT_GUIDE.md)
+- **Before using real data:** [docs/FFFA_DISCLAIMERS.md](docs/FFFA_DISCLAIMERS.md) · **Demo:** [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
+
+Each guide also comes as a PDF next to it.
 
 ## Run it locally
 
@@ -27,9 +31,15 @@ npm test        # API + service tests (in-memory database)
 npm run lint    # type-check
 ```
 
-Reset your local database any time with `rm -rf .data`.
+To try the Excel import, start from an empty database and generate practice files (dates are relative to today):
 
-Needs Node.js 20+ and Git. New to this? [docs/HANDOVER.md](docs/HANDOVER.md) walks through setup with an AI coding assistant.
+```bash
+npm run demo:reset   # deletes the local database in .data/
+npm run demo:files   # writes docs/samples/fffa-demo-donors.xlsx and fffa-demo-update.xlsx
+npm run dev
+```
+
+Needs Node.js 20+ and Git. New to this? [docs/PROMPT_GUIDE.md](docs/PROMPT_GUIDE.md) has ready-made instructions for an AI coding assistant, and [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md) explains each step.
 
 ## Run in production
 
@@ -42,12 +52,12 @@ npm start          # NODE_ENV=production; serves the built app and the API on $P
 | Variable | Required | Notes |
 |---|---|---|
 | `DATABASE_URL` | Yes | Postgres connection string (Supabase). Migrations run automatically on start. Without it the app uses a local PGlite folder, which is not suitable for hosting. |
-| `AUTH_MODE` | Yes | `supabase` in production (`dev` is refused). The Supabase resolver in `server/middleware/auth.ts` must be implemented first, see HANDOVER section 5. |
+| `AUTH_MODE` | Yes | `supabase` in production (`dev` is refused). The Supabase resolver in `server/middleware/auth.ts` must be implemented first, see SETUP_GUIDE section 7. |
 | `GEMINI_API_KEY` | No | Paid-tier key so donor data isn't used for training. Without it, drafts use templates. |
 | `GEMINI_MODEL` | No | Default `gemini-3.6-flash`. |
 | `PORT` | No | Default 3000. |
 
-Step-by-step hosting (Supabase + Render) is in [docs/HANDOVER.md](docs/HANDOVER.md), section 6.
+Step-by-step hosting (Supabase + Render) is in [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md), section 8.
 
 ## Stack
 
@@ -68,10 +78,10 @@ server/
     ai/               # DM10: context, prompts, fallbacks, Gemini client, drafting
 shared/types.ts       # domain types used by API and frontend
 src/                  # React app
-docs/                 # system design
+docs/                 # design, guides, sample import files
 ```
 
-## Phase 1 status
+## Status at handover (28 Oct 2026)
 
 | Slice | PRD | Owner | Status |
 |---|---|---|---|
@@ -81,8 +91,10 @@ docs/                 # system design
 | Read-only follow-up queue and donor profile endpoints (used by the drafting screen) | DM2, DM3, DM9 | Ghanashyam | Done; writes and filters: Swaraj |
 | Donors, donations (cash + in-kind), notes, engagements, key dates: create / update / archive | DM1–DM3, DM8 | Swaraj | Done (API) |
 | Follow-up rules engine (incl. key dates, failed payments) + queue API | DM4, DM9 | Swaraj | Done (API) |
-| Supabase Auth + all screens except dashboard | DM7, UI | Chris | To do |
-| CSV import with Giving.sg + GIVE.asia matching (`/api/import/preview`, `/commit`), dashboard API + screen, activity log endpoint | DM5, DM6, DM7 | Lynn | Done (Import screen: Chris; sample files in `docs/samples/`) |
+| Screens: Donors (search, add, log donation, notes, export), Excel import with preview and decisions, Settings | DM1–DM3, DM6, DM9, UI | Chris | Done |
+| Supabase Auth (staff login): required before hosting | DM7 | — | **To do** |
+| Daily scheduled rules run; Singapore-time dates; screens for done/snooze/dismiss, donor edit/archive, void, key dates, platform CSV upload, activity log | DM4, DM6, DM7 | — | To do (APIs exist; see docs/PROMPT_GUIDE.md section 4) |
+| CSV import with Giving.sg + GIVE.asia matching (`/api/import/preview`, `/commit`), dashboard API + screen, activity log endpoint | DM5, DM6, DM7 | Lynn | Done (API; sample files in `docs/samples/`) |
 
 ## Conventions
 
