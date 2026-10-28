@@ -39,6 +39,20 @@ export interface DismissFollowUpInput {
   reason?: string;
 }
 
+/**
+ * Closing a follow-up from the queue also closes any draft or approved message for it, so no
+ * DM10 draft is left open against a finished follow-up. Sent drafts are left as they are.
+ */
+async function discardOpenDrafts(tx: Db, followUpId: Uuid): Promise<Uuid[]> {
+  const rows = await tx.query<{ id: Uuid }>(
+    `update ai_drafts set status = 'discarded'
+     where follow_up_id = $1 and status in ('draft', 'approved')
+     returning id`,
+    [followUpId],
+  );
+  return rows.map((r) => r.id);
+}
+
 export async function refreshQueue(
   db: Db,
   staff: Staff,
@@ -148,7 +162,10 @@ export async function completeFollowUp(
       }
     }
 
-    // 5. Audit log
+    // 5. Close any open AI draft for this follow-up
+    const discardedDrafts = await discardOpenDrafts(tx, followUpId);
+
+    // 6. Audit log
     await logActivity(tx, {
       actor: staff.id,
       action: 'followup.complete',
@@ -159,6 +176,7 @@ export async function completeFollowUp(
         channel,
         engagement_id: engagement.id,
         donor_id: followUp.donor_id,
+        ...(discardedDrafts.length ? { discarded_draft_ids: discardedDrafts } : {}),
       },
     });
 
@@ -229,13 +247,17 @@ export async function dismissFollowUp(
        returning *`,
       [followUpId],
     );
+    const discardedDrafts = await discardOpenDrafts(tx, followUpId);
 
     await logActivity(tx, {
       actor: staff.id,
       action: 'followup.dismiss',
       entityType: 'follow_up',
       entityId: followUpId,
-      diff: { reason: input.reason?.trim() || null },
+      diff: {
+        reason: input.reason?.trim() || null,
+        ...(discardedDrafts.length ? { discarded_draft_ids: discardedDrafts } : {}),
+      },
     });
 
     return updated;
