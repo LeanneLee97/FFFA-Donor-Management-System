@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { Staff } from '../shared/types.ts';
 import AiDraftingPage from './features/ai-drafting/AiDraftingPage.tsx';
+import DashboardPage from './features/dashboard/DashboardPage.tsx';
 import { api } from './lib/api.ts';
 
 /**
  * App shell. Currently hosts the AI drafting screen (DM10); the other Phase 1 screens
- * (Today, Donors, Dashboard, Import, Settings) slot in here as they land (Chris).
+ * (Today, Donors, Import, Settings) slot in here as they land (Chris).
  */
 export default function App() {
   const [me, setMe] = useState<Staff | null>(null);
   const [ai, setAi] = useState<string | null>(null);
+  const [page, setPage] = useState<'follow-ups' | 'dashboard'>('follow-ups');
 
   useEffect(() => {
     api.get<Staff>('/api/me').then(setMe).catch(() => setMe(null));
@@ -22,8 +24,19 @@ export default function App() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Free Food For All</p>
-            <h1 className="text-lg font-bold text-slate-900">Donor follow-ups</h1>
+            <h1 className="text-lg font-bold text-slate-900">Donor management</h1>
           </div>
+          <nav className="flex gap-1 text-sm">
+            {([['follow-ups', 'Follow-ups'], ['dashboard', 'Dashboard']] as const).map(([p, label]) => (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={`rounded-lg px-3 py-1.5 font-medium ${page === p ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
           <div className="text-right text-xs text-slate-500">
             {me && (
               <p>
@@ -34,7 +47,7 @@ export default function App() {
           </div>
         </div>
       </header>
-      <AiDraftingPage />
+      {page === 'follow-ups' ? <AiDraftingPage /> : <DashboardPage />}
     </div>
   );
 }

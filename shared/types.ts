@@ -203,3 +203,15 @@ export interface ApiError {
   error: string;
   code?: string;
 }
+
+/** GET /api/dashboard (DM5): aggregates only. */
+export interface Dashboard {
+  donors: { total: number; active_12m: number; major: number; recurring: number };
+  giving_12m_sgd: number;
+  monthly_recurring_sgd: number;
+  tiers: { tier: string; donors: number }[];
+  follow_ups: { reason: string; pending: number }[];
+  months: { month: string; donations_sgd: number; donations: number; engagements: number }[];
+  campaigns: { campaign: string; donations_sgd: number; donors: number }[];
+  ai: { drafted_30d: number; sent_30d: number };
+}

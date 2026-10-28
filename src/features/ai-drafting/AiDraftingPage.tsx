@@ -27,7 +27,7 @@ import { api, ApiRequestError } from '../../lib/api.ts';
  * The full Today queue and donor profile screens (Chris) can reuse these pieces.
  */
 
-const REASON: Record<FollowUpReason, { label: string; tone: string }> = {
+export const REASON: Record<FollowUpReason, { label: string; tone: string }> = {
   thank_you_due: { label: 'Thank-you due', tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   failed_payment: { label: 'Failed payment', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
   key_date: { label: 'Key date', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
