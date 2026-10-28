@@ -6,6 +6,7 @@ import { platformRouter } from './routes/platform.ts';
 import { donorsRouter } from './routes/donors.ts';
 import { followupsRouter } from './routes/followups.ts';
 import { insightsRouter } from './routes/insights.ts';
+import { excelImportRouter } from './routes/excelImport.ts';
 import type { AiClient } from './services/ai/client.ts';
 import { HttpError } from './lib/errors.ts';
 
@@ -30,6 +31,7 @@ export function createApp({ db, ai, resolveStaff }: AppDeps) {
   api.use(donorsRouter(db));
   api.use(followupsRouter(db));
   api.use(insightsRouter(db));
+  api.use(excelImportRouter(db));
   app.use('/api', api);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
