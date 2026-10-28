@@ -57,10 +57,10 @@ docs/                 # system design
 | AI drafting: draft → edit → approve → mark as sent (message saved on profile), major-donor block, template fallback, drafting screen + demo data | DM10 | Ghanashyam | Done (live Gemini test pending an API key) |
 | Settings API (admin): follow-up rules, tiers, impact unit, major thresholds | DM9, DM10 | Ghanashyam | Done (Settings screen: Chris) |
 | Read-only follow-up queue and donor profile endpoints (used by the drafting screen) | DM2, DM3, DM9 | Ghanashyam | Done; writes and filters: Swaraj |
-| Donors, donations (cash + in-kind), notes, engagements, key dates: create / update / archive | DM1–DM3, DM8 | Swaraj | To do |
-| Follow-up rules engine (incl. key dates, failed payments) + queue API | DM4, DM9 | Swaraj | To do |
+| Donors, donations (cash + in-kind), notes, engagements, key dates: create / update / archive | DM1–DM3, DM8 | Swaraj | Done (API) |
+| Follow-up rules engine (incl. key dates, failed payments) + queue API | DM4, DM9 | Swaraj | Done (API) |
 | Supabase Auth + all screens except dashboard | DM7, UI | Chris | To do |
-| Seed data, CSV import (Giving.sg + GIVE.asia matching), dashboard, activity log endpoint | DM5, DM6, DM7 | Lynn | To do |
+| CSV import with Giving.sg + GIVE.asia matching (`/api/import/preview`, `/commit`), dashboard API + screen, activity log endpoint | DM5, DM6, DM7 | Lynn | Done (Import screen: Chris; sample files in `docs/samples/`) |
 
 ## Conventions
 

@@ -5,6 +5,7 @@ import { draftsRouter } from './routes/drafts.ts';
 import { platformRouter } from './routes/platform.ts';
 import { donorsRouter } from './routes/donors.ts';
 import { followupsRouter } from './routes/followups.ts';
+import { insightsRouter } from './routes/insights.ts';
 import type { AiClient } from './services/ai/client.ts';
 import { HttpError } from './lib/errors.ts';
 
@@ -17,7 +18,7 @@ export interface AppDeps {
 /** Builds the API without starting a server, so tests can call it directly. */
 export function createApp({ db, ai, resolveStaff }: AppDeps) {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '5mb' })); // CSV imports arrive as JSON text
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, ai: ai ? ai.model : 'templates only' }));
 
@@ -28,7 +29,7 @@ export function createApp({ db, ai, resolveStaff }: AppDeps) {
   api.use(platformRouter(db));
   api.use(donorsRouter(db));
   api.use(followupsRouter(db));
-  // Slices plug in here as they land: import + dashboard (Lynn).
+  api.use(insightsRouter(db));
   app.use('/api', api);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
