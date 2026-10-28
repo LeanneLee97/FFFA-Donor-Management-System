@@ -3,6 +3,7 @@ import type { Db } from './db.ts';
 import { requireStaff, type StaffResolver } from './middleware/auth.ts';
 import { draftsRouter } from './routes/drafts.ts';
 import { platformRouter } from './routes/platform.ts';
+import { donorsRouter } from './routes/donors.ts';
 import type { AiClient } from './services/ai/client.ts';
 import { HttpError } from './lib/errors.ts';
 
@@ -24,7 +25,8 @@ export function createApp({ db, ai, resolveStaff }: AppDeps) {
   api.get('/me', (req, res) => res.json(req.staff));
   api.use(draftsRouter(db, ai));
   api.use(platformRouter(db));
-  // Slices plug in here as they land: donor/follow-up writes (Swaraj), import + dashboard (Lynn).
+  api.use(donorsRouter(db));
+  // Slices plug in here as they land: follow-up rules engine & queue writes (Swaraj), import + dashboard (Lynn).
   app.use('/api', api);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

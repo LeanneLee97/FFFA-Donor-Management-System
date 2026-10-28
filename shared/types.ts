@@ -184,6 +184,20 @@ export interface DonorProfile {
   follow_ups: FollowUp[];
 }
 
+/** GET /api/donors: a donor with display name and computed summary. */
+export interface DonorListItem extends Donor {
+  donor_name: string;
+  summary: DonorSummary | null;
+}
+
+export interface DonorFilters {
+  query?: string;
+  type?: DonorType;
+  tier?: Tier;
+  lastDonationBefore?: IsoDate;
+  owner?: Uuid;
+}
+
 /** Standard error body for every API route. */
 export interface ApiError {
   error: string;
