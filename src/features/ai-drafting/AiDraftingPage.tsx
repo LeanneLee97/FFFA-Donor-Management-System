@@ -163,7 +163,13 @@ export default function AiDraftingPage() {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Follow-ups</h2>
-          <button onClick={() => loadQueue().catch((e: Error) => setError(e.message))} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Refresh">
+          <button
+            onClick={() =>
+              api.post('/api/follow-ups/refresh').then(() => loadQueue()).catch((e: Error) => setError(e.message))
+            }
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            title="Check donors against the follow-up rules now"
+          >
             <RefreshCw className="h-4 w-4" />
           </button>
         </div>

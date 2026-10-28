@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { Db } from '../db.ts';
 import { asyncRoute } from '../lib/asyncRoute.ts';
 import { HttpError } from '../lib/errors.ts';
+import { requireAdmin } from '../middleware/auth.ts';
+import { exportDonorsWorkbook } from '../services/export.ts';
 import { commitImport, previewImport, type ImportDecisions, type ImportPayload } from '../services/import.ts';
 
 /**
@@ -31,6 +33,18 @@ export function excelImportRouter(db: Db): Router {
     asyncRoute(async (req, res) => {
       const { rows, decisions } = read(req.body);
       res.status(201).json(await commitImport(db, req.staff!, rows, decisions));
+    }),
+  );
+
+  // Contains personal data, so admins only; every export is written to the activity log.
+  router.get(
+    '/export/donors.xlsx',
+    requireAdmin,
+    asyncRoute(async (req, res) => {
+      const { buffer } = await exportDonorsWorkbook(db, req.staff!);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="fffa-donors-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+      res.send(buffer);
     }),
   );
 

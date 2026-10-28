@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import type { Staff } from '../shared/types.ts';
 import AiDraftingPage from './features/ai-drafting/AiDraftingPage.tsx';
 import DashboardPage from './features/dashboard/DashboardPage.tsx';
+import DonorsPage from './features/donors/DonorsPage.tsx';
 import ExcelImportPage from './features/excel-import/ExcelImportPage.tsx';
+import SettingsPage from './features/settings/SettingsPage.tsx';
 import { api } from './lib/api.ts';
 
 /**
@@ -12,7 +14,7 @@ import { api } from './lib/api.ts';
 export default function App() {
   const [me, setMe] = useState<Staff | null>(null);
   const [ai, setAi] = useState<string | null>(null);
-  const [page, setPage] = useState<'follow-ups' | 'dashboard' | 'import'>('follow-ups');
+  const [page, setPage] = useState<'follow-ups' | 'donors' | 'dashboard' | 'import' | 'settings'>('follow-ups');
 
   useEffect(() => {
     api.get<Staff>('/api/me').then(setMe).catch(() => setMe(null));
@@ -28,7 +30,7 @@ export default function App() {
             <h1 className="text-lg font-bold text-slate-900">Donor management</h1>
           </div>
           <nav className="flex gap-1 text-sm">
-            {([['follow-ups', 'Follow-ups'], ['dashboard', 'Dashboard'], ['import', 'Import']] as const).map(([p, label]) => (
+            {([['follow-ups', 'Follow-ups'], ['donors', 'Donors'], ['dashboard', 'Dashboard'], ['import', 'Import'], ...(me?.role === 'admin' ? [['settings', 'Settings'] as const] : [])] as const).map(([p, label]) => (
               <button
                 key={p}
                 onClick={() => setPage(p)}
@@ -48,7 +50,11 @@ export default function App() {
           </div>
         </div>
       </header>
-      {page === 'follow-ups' ? <AiDraftingPage /> : page === 'dashboard' ? <DashboardPage /> : <ExcelImportPage />}
+      {page === 'follow-ups' && <AiDraftingPage />}
+      {page === 'donors' && <DonorsPage me={me} />}
+      {page === 'dashboard' && <DashboardPage />}
+      {page === 'import' && <ExcelImportPage />}
+      {page === 'settings' && <SettingsPage />}
     </div>
   );
 }

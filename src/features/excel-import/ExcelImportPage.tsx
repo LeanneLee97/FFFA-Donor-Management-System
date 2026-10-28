@@ -122,7 +122,7 @@ export default function ExcelImportPage() {
       {result && (
         <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           <CheckCircle2 className="h-4 w-4" /> Imported {result.donors_created} donors, {result.donations_created} donations and {result.key_dates_created} key dates.
-          Run "Refresh queue" or check the Dashboard to see the follow-ups they trigger.
+          Open Follow-ups and press the refresh icon to see the follow-ups they trigger.
         </div>
       )}
 

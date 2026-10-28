@@ -10,7 +10,9 @@
     "test": "vitest run",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "demo": "DEMO_SEED=true tsx server/index.ts"
+    "demo": "DEMO_SEED=true tsx server/index.ts",
+    "demo:files": "tsx server/dev/makeDemoWorkbooks.ts",
+    "demo:reset": "rm -rf .data"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.10",
