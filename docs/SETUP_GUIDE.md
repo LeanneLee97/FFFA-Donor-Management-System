@@ -1,4 +1,4 @@
-# FFFA Donor Management: Handover Guide
+# FFFA Donor Management: Setup Guide
 
 *28 October 2026 · Empact × FFFA AI Impact Sprint*
 
@@ -11,8 +11,9 @@ This guide is for whoever takes the system forward for FFFA: a staff member usin
 | The code | GitHub repository `FFFA-Donor-Management-System` |
 | How to run it | `README.md` in the repository |
 | How it's designed (database, rules, AI safeguards) | `docs/SYSTEM_DESIGN.md` (and `.pdf`) |
-| How staff use it | `docs/staff-guide/STAFF_GUIDE.md` (and `.pdf`) |
-| This guide | `docs/HANDOVER.md` (and `.pdf`) |
+| This guide: configuration, access, approved fields, workflow rules, troubleshooting | `docs/SETUP_GUIDE.md` (and `.pdf`) |
+| How staff run it day to day | `docs/staff-guide/STAFF_GUIDE.md` (and `.pdf`) |
+| How the AI drafts messages and how staff check them | `docs/PROMPT_GUIDE.md` (and `.pdf`) |
 | Sample import files | `docs/samples/` |
 
 ---
@@ -59,7 +60,7 @@ npm install --legacy-peer-deps
 npm run demo
 ```
 
-Open **http://localhost:3000**. You are signed in automatically as a practice admin, with 9 made-up donors. Without an AI key, drafts use standard templates; section 6 covers adding one.
+Open **http://localhost:3000**. You are signed in automatically as a practice admin, with 9 made-up donors. Without an AI key, drafts use standard templates; section 9 covers adding one.
 
 | Command | What it does |
 |---|---|
@@ -73,7 +74,74 @@ Press **Ctrl + C** in the Terminal to stop the app.
 
 ---
 
-## 4. Make changes safely with an AI assistant
+## 4. Configuration
+
+Settings live in two places.
+
+**Server settings (environment variables).** These are set once, in a `.env` file on a laptop or in the hosting dashboard. They hold secrets, so they never go into the code.
+
+| Setting | What it does |
+|---|---|
+| `DATABASE_URL` | Where donor data is stored (Supabase). Empty = a local practice database. |
+| `AUTH_MODE` | `dev` = automatic practice login (laptop only). `supabase` = real staff login (required online). |
+| `GEMINI_API_KEY` | Turns on AI drafting. Empty = standard templates. |
+| `GEMINI_MODEL` | Which Gemini model to use (default `gemini-3.6-flash`). |
+| `PORT` | Web port (default 3000). |
+
+**FFFA settings (admins, inside the app).** These are stored in the database and changed by an admin through `PATCH /api/settings`, or on the Settings screen where one exists. Every change is logged with who changed it and the old and new values. The values are listed under *Workflow rules* below.
+
+---
+
+## 5. Approved fields
+
+These are the only things the system stores. Anything else should not be recorded.
+
+| Record | Fields | Notes |
+|---|---|---|
+| **Donor** | Name (first, last, preferred) or organisation name; contact person and their title; email; mobile; type (individual, corporate, grant funder); relationship owner; how they know FFFA; programme interest (for example RTE, KidsLuvIt, Food Redistribution); also volunteers; next action and due date; major-donor tag | Mobile and email are never sent to the AI |
+| **Donation** | Date; amount (S$) or, for goods, description and estimated value; channel (Giving.sg, GIVE.asia, bank, PayNow, in person, other); platform reference; campaign; programme; monthly or one-off; payment status (succeeded or failed); thanked | Never deleted. Mistakes are *voided* with a reason. |
+| **Key date** | Type (sponsorship expiry, grant report, grant renewal, other); due date; label; completed | |
+| **Note** | Free text, author, date | Write relationship facts, not sensitive personal data |
+| **Conversation** (engagement) | Date, channel, campaign, summary, the exact message sent | Created by *Mark as sent* or when a follow-up is completed |
+| **Follow-up** | Reason, due date, status (pending, snoozed, done, dismissed) | Created by the rules, never typed in |
+| **AI draft** | Generated text, final approved text, who approved, when sent | Kept for checking quality |
+
+**Never store:** NRIC, FIN, passport or UEN numbers; bank or card details; health, religion or family circumstances beyond what the donor chose to share for a thank-you. If ID numbers are ever needed (for example tax receipts), `docs/SYSTEM_DESIGN.md` section 3 explains how to add them in a separate, encrypted, admin-only table.
+
+---
+
+## 6. Workflow rules
+
+The follow-up queue is filled automatically by these rules. The numbers are FFFA's starting settings, and an admin can change each one.
+
+| Follow-up | Appears when | Setting (default) |
+|---|---|---|
+| Thank-you due | A gift (money or goods) hasn't been thanked after N days | `thank_you_after_days` = 3 |
+| Failed payment | A monthly payment failed in the last N days | `failed_payment_window_days` = 7 |
+| Key date | A key date is due within N days | `key_date_window_days` = 30 |
+| Going cold | No contact for longer than the donor's tier allows | Tier cadence (below) |
+| Lapsed | No gift for N days | `lapsed_recurring_days` = 45 (monthly donors), `lapsed_one_off_days` = 180 (one-off) |
+| Anniversary | First-gift anniversary within N days | `anniversary_window_days` = 7 |
+| Upgrade ask | Same monthly amount for N months, not asked in the last year | `upgrade_same_amount_months` = 12 |
+
+**Tiers** (internal only, never shown to donors), based on cash giving in the last 12 months:
+
+| Tier | From | Check in at least every |
+|---|---|---|
+| Bronze | S$0 | 90 days |
+| Silver | S$1,000 | 60 days |
+| Gold | S$5,000 | 45 days |
+| Diamond | S$20,000 | 30 days |
+
+**Major donors** get personal outreach and no AI drafts: S$5,000+ in 12 months (`major_min_12m_sgd`), or 3+ years with FFFA (`major_min_years`), or tagged by staff.
+
+**Impact figure:** S$10 = 1 meal for an elderly person (`impact_unit_sgd`, `impact_unit_singular`, `impact_unit_plural`). **Sign-off** and **organisation name** are org settings too.
+
+**When the rules run:** after every import, and whenever the queue is refreshed (`POST /api/follow-ups/refresh`). The same follow-up is never created twice. A follow-up that was done or dismissed stays closed.
+
+---
+
+## 7. Make changes safely with an AI assistant
 
 Every change follows the same five steps. You can ask the assistant to do each one.
 
@@ -92,7 +160,7 @@ Every change follows the same five steps. You can ask the assistant to do each o
 
 ---
 
-## 5. What the system does today, and what it doesn't yet
+## 8. What the system does today, and what it doesn't yet
 
 **Built and tested** (each has automatic tests):
 
@@ -112,13 +180,13 @@ Every change follows the same five steps. You can ask the assistant to do each o
 
 ---
 
-## 6. Put it online
+## 9. Put it online
 
 This is a one-time setup, best done with the AI assistant. Each step names the website and what to copy where. Keep all keys secret: they go in the hosting settings, never in the code or in chat.
 
 **Step 1: Database and login (Supabase).** Create a free project at supabase.com, in the Singapore region. Copy the **connection string** (*Project Settings* → *Database*). It becomes `DATABASE_URL`. The app creates all its tables automatically the first time it starts. Turn on email login under *Authentication*.
 
-**Step 2: Finish the login.** Use the prompt in section 5. Then add each staff member to the `staff` table with their email and role (`staff` or `admin`).
+**Step 2: Finish the login.** Use the prompt in section 8. Then add each staff member to the `staff` table with their email and role (`staff` or `admin`).
 
 **Step 3: AI key (Google Gemini).** At aistudio.google.com create an API key, and **turn on billing for it**. On the paid tier, Google does not use FFFA's data to improve its products. That matters for donor information. The key becomes `GEMINI_API_KEY`. Without it, the app still works and uses templates.
 
@@ -141,7 +209,7 @@ Render gives you a web link. Every merge to `main` updates the live site automat
 
 ---
 
-## 7. Data protection (PDPA)
+## 10. Data protection (PDPA)
 
 - Donor data lives only in FFFA's Supabase database. The AI receives donor names, giving history and notes with phone numbers, emails and ID numbers removed. It never receives contact details.
 - No NRIC, FIN, UEN or bank details are stored. If this is needed later, the design (section 3) explains how to add it in a separate, admin-only, encrypted table.
@@ -150,7 +218,7 @@ Render gives you a web link. Every merge to `main` updates the live site automat
 
 ---
 
-## 8. If something goes wrong
+## 11. If something goes wrong
 
 | Problem | Fix |
 |---|---|
@@ -163,6 +231,6 @@ Render gives you a web link. Every merge to `main` updates the live site automat
 
 ---
 
-## 9. Hiring help
+## 12. Hiring help
 
-To bring in a developer or freelancer, add them on GitHub with *Write* access (section 1), share this guide, `README.md` and `docs/SYSTEM_DESIGN.md`, and ask for every change as a pull request that you approve. Remove their access when the work is done. Keep the Supabase, Google and hosting accounts in FFFA's name.
+To bring in a developer or freelancer, add them on GitHub with *Write* access (section 1), share this guide, `docs/PROMPT_GUIDE.md`, `README.md` and `docs/SYSTEM_DESIGN.md`, and ask for every change as a pull request that you approve. Remove their access when the work is done. Keep the Supabase, Google and hosting accounts in FFFA's name.
