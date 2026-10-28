@@ -207,6 +207,11 @@ describe('fallbackDraft', () => {
     expect(body).toContain('200 packs of rice');
   });
 
+  it('writes key dates in plain English', () => {
+    const body = fallbackDraft(buildDraftContext(inputs('key_date', { keyDate }))).body;
+    expect(body).toContain('Q4 report to XYZ Foundation is due on 15 November 2026');
+  });
+
   it('writes a gentle failed-payment note naming the platform', () => {
     const failed = donation({ payment_status: 'failed', channel: 'give_asia' });
     const body = fallbackDraft(buildDraftContext(inputs('failed_payment', { failedDonation: failed }))).body;

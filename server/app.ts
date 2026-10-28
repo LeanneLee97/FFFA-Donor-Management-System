@@ -2,8 +2,10 @@ import express, { type ErrorRequestHandler } from 'express';
 import type { Db } from './db.ts';
 import { requireStaff, type StaffResolver } from './middleware/auth.ts';
 import { draftsRouter } from './routes/drafts.ts';
+import { platformRouter } from './routes/platform.ts';
+import { donorsRouter } from './routes/donors.ts';
 import type { AiClient } from './services/ai/client.ts';
-import { DraftError } from './services/ai/drafting.ts';
+import { HttpError } from './lib/errors.ts';
 
 export interface AppDeps {
   db: Db;
@@ -22,7 +24,9 @@ export function createApp({ db, ai, resolveStaff }: AppDeps) {
   api.use(requireStaff(resolveStaff));
   api.get('/me', (req, res) => res.json(req.staff));
   api.use(draftsRouter(db, ai));
-  // Slices plug in here as they land: donors (Swaraj), follow-ups (Swaraj), import + dashboard (Lynn).
+  api.use(platformRouter(db));
+  api.use(donorsRouter(db));
+  // Slices plug in here as they land: follow-up rules engine & queue writes (Swaraj), import + dashboard (Lynn).
   app.use('/api', api);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
@@ -31,7 +35,7 @@ export function createApp({ db, ai, resolveStaff }: AppDeps) {
 }
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
-  if (err instanceof DraftError) {
+  if (err instanceof HttpError) {
     return res.status(err.status).json({ error: err.message, code: err.code });
   }
   // Postgres: invalid uuid text in a route param.
