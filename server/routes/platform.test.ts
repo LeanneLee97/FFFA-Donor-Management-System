@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Staff } from '../../shared/types.ts';
 import { createApp } from '../app.ts';
 import { createDb, migrate, type Db } from '../db.ts';
-import { DEMO_DOMAIN, seedDemo } from '../dev/demoSeed.ts';
+import { DEMO_DOMAIN, DEMO_EXPECTS, seedDemo } from '../dev/demoSeed.ts';
 import { devStaffResolver } from '../middleware/auth.ts';
 import type { AiClient } from '../services/ai/client.ts';
 
@@ -80,8 +80,10 @@ describe('read endpoints for the drafting screen', () => {
   it('lists open follow-ups with donor name, major flag and any open draft', async () => {
     await seedDemo(db);
     const { body: queue } = await request(admin()).get('/api/follow-ups').expect(200);
-    expect(queue).toHaveLength(9);
-    const acme = queue.find((q: { organisation_name: string }) => q.organisation_name === 'Acme Logistics Pte Ltd');
+    const acme = queue.find(
+      (q: { organisation_name: string; reason: string }) =>
+        q.organisation_name === 'Acme Logistics Pte Ltd' && q.reason === 'key_date',
+    );
     expect(acme).toMatchObject({ reason: 'key_date', donor_name: 'Ravi Kumar', key_date_label: 'Food Redistribution sponsorship renewal', open_draft: null });
     expect(queue.find((q: { donor_name: string }) => q.donor_name === 'Boon Huat Tan').is_major).toBe(true);
 
@@ -112,6 +114,17 @@ describe('demo data', () => {
     expect(await seedDemo(db)).toBe(9);
     expect(await seedDemo(db)).toBe(0);
 
+    // The rules engine built the queue, so each donor raises the follow-up they are there to demo,
+    // and refreshing the queue adds nothing new.
+    const raised = await db.query<{ key: string; reason: string }>(
+      `select split_part(d.email, '@', 1) as key, f.reason from follow_ups f join donors d on d.id = f.donor_id`,
+    );
+    for (const [key, reason] of Object.entries(DEMO_EXPECTS)) {
+      expect(raised).toContainEqual({ key, reason });
+    }
+    const refresh = await request(admin()).post('/api/follow-ups/refresh').expect(200);
+    expect(refresh.body.created).toBe(0);
+
     const prompts: string[] = [];
     const ai: AiClient = {
       model: 'fake',
@@ -127,7 +140,8 @@ describe('demo data', () => {
       const res = await request(app).post(`/api/follow-ups/${item.id}/draft`);
       expect(res.status).toBe(item.is_major ? 422 : 201);
     }
-    expect(prompts).toHaveLength(8); // everyone except the major donor
+    // Everyone except the major donor (Boon Huat) gets a draft.
+    expect(prompts).toHaveLength(queue.filter((q: { is_major: boolean }) => !q.is_major).length);
     const all = prompts.join('\n');
     expect(all).not.toContain(DEMO_DOMAIN);
     expect(all).not.toContain('9123 4567');

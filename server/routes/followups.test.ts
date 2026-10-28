@@ -213,4 +213,26 @@ describe('follow-ups queue API (DM4 & DM9)', () => {
     );
     expect(log.diff.reason).toBe('Donor requested no anniversary greetings');
   });
+
+  it.each(['complete', 'dismiss'])('%s closes any open AI draft for the follow-up', async (action) => {
+    const app = admin();
+    const [donor] = await db.query<Donor>(`insert into donors (first_name) values ('Drafted') returning *`);
+    await db.query(`insert into donations (donor_id, donated_on, amount_sgd) values ($1, current_date - 5, 50)`, [donor.id]);
+    const [followUp] = await db.query<FollowUp>(
+      `insert into follow_ups (donor_id, reason, dedupe_key) values ($1, 'manual', 'test|drafted') returning *`,
+      [donor.id],
+    );
+    const { body: draft } = await request(app).post(`/api/follow-ups/${followUp.id}/draft`).expect(201);
+    await request(app).post(`/api/drafts/${draft.id}/approve`).send({ body: 'ok' }).expect(200);
+
+    await request(app).post(`/api/follow-ups/${followUp.id}/${action}`).send({}).expect(200);
+
+    const [after] = await db.query<{ status: string }>('select status from ai_drafts where id = $1', [draft.id]);
+    expect(after.status).toBe('discarded');
+    const [log] = await db.query<{ diff: { discarded_draft_ids: string[] } }>(
+      'select diff from activity_log where action = $1',
+      [`followup.${action}`],
+    );
+    expect(log.diff.discarded_draft_ids).toEqual([draft.id]);
+  });
 });
