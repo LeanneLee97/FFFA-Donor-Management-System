@@ -4,6 +4,8 @@ A staff-facing donor management system for **Free Food For All**, built in the E
 
 - **Requirements:** PRD v2 (shared Drive)
 - **Design:** [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) (also as PDF)
+- **Handover (taking it forward, going live):** [docs/HANDOVER.md](docs/HANDOVER.md) (also as PDF)
+- **Staff guide (using it day to day):** [docs/staff-guide/STAFF_GUIDE.md](docs/staff-guide/STAFF_GUIDE.md) (also as PDF)
 
 ## Run it locally
 
@@ -26,6 +28,26 @@ npm run lint    # type-check
 ```
 
 Reset your local database any time with `rm -rf .data`.
+
+Needs Node.js 20+ and Git. New to this? [docs/HANDOVER.md](docs/HANDOVER.md) walks through setup with an AI coding assistant.
+
+## Run in production
+
+```bash
+npm install --legacy-peer-deps
+npm run build
+npm start          # NODE_ENV=production; serves the built app and the API on $PORT
+```
+
+| Variable | Required | Notes |
+|---|---|---|
+| `DATABASE_URL` | Yes | Postgres connection string (Supabase). Migrations run automatically on start. Without it the app uses a local PGlite folder, which is not suitable for hosting. |
+| `AUTH_MODE` | Yes | `supabase` in production (`dev` is refused). The Supabase resolver in `server/middleware/auth.ts` must be implemented first, see HANDOVER section 5. |
+| `GEMINI_API_KEY` | No | Paid-tier key so donor data isn't used for training. Without it, drafts use templates. |
+| `GEMINI_MODEL` | No | Default `gemini-3.6-flash`. |
+| `PORT` | No | Default 3000. |
+
+Step-by-step hosting (Supabase + Render) is in [docs/HANDOVER.md](docs/HANDOVER.md), section 6.
 
 ## Stack
 
